@@ -53,6 +53,7 @@ type ShopListsAll struct {
 	Name   string  `json:"name"`
 	Date   float32 `json:"date"`
 	Hidden bool    `json:"hidden"`
+	Label  string  `json:"label"`
 }
 
 type UserNew struct {
