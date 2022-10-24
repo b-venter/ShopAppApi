@@ -281,7 +281,7 @@ func listGetVisible(c echo.Context) error {
 	db := dbase{dbv}
 
 	//DB query
-	query := "FOR list in ShoppingLists FILTER list.hidden == false RETURN {'name': list.name, 'date': list.date, 'id': list._key}"
+	query := "FOR list in ShoppingLists FILTER list.hidden == false RETURN {'name': list.name, 'date': list.date, 'id': list._key, 'label': list.label}"
 	var bind string
 
 	//Run query and response. bind is a null string "" since no binding takes place for the query
@@ -306,7 +306,7 @@ func listGetAll(c echo.Context) error {
 	db := dbase{dbv}
 
 	//DB query
-	query := "FOR list in ShoppingLists RETURN {'name': list.name, 'date': list.date, 'hidden': list.hidden, 'id': list._key}"
+	query := "FOR list in ShoppingLists RETURN {'name': list.name, 'date': list.date, 'hidden': list.hidden, 'id': list._key, 'label': list.label}"
 	var bind string
 
 	//Run query and response. bind is a null string "" since no binding takes place for the query
@@ -890,6 +890,40 @@ func listSetHidden(c echo.Context) error {
 
 }
 
+func listEdit(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get item id
+	id := c.Param("id")
+	col := "ShoppingLists"
+
+	var data ShopListsAll
+	var update string
+
+	if err := c.Bind(&data); err != nil {
+		return err
+	} else if err == nil {
+
+		//Verify data, because Arango does not by default
+		if data.Date == 0 || data.Name == "" || data.Id == "" || data.Label == "" {
+			return c.JSON(http.StatusBadRequest, "all options must be set")
+		}
+
+		update, err = data.patchQueries(col, id, db)
+
+		if err != nil {
+			//Since data was verified, any error is likely server related?
+			return c.JSON(http.StatusInternalServerError, err)
+		}
+
+	}
+
+	return c.JSON(http.StatusOK, "update successful: "+update)
+
+}
+
 //Can update edge doc contents, but not change _from and _to
 //Updates shopping lists qty, price, trolley, etc
 func listSetTrolley(c echo.Context) error {
@@ -1148,6 +1182,7 @@ func main() {
 	r3.GET("/trolley/:id/:key", listGetTrolley)
 	r3.POST("/new", listCreate)
 	r3.PATCH("/hide/:id", listSetHidden)
+	r3.PATCH("/edit/:id", listEdit)
 	r3.PATCH("/trolley/:id/:key", listSetTrolley)
 	r3.PATCH("/additem/:id", listAddItem)
 	r3.PATCH("/moveitem/:id/:key", listMoveItem)
