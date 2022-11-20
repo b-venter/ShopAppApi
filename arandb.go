@@ -121,6 +121,35 @@ type ItemTrend struct {
 	List     string `json:"list_id"`
 }
 
+//Template items
+type TplItem struct {
+	Label     string  `json:"label"`
+	Nett      float32 `json:"nett"`
+	Nett_unit string  `json:"nett_unit"`
+	Qty       float32 `json:"qty"`
+	Edge_id   string  `json:"edge_id"`
+	Item_id   string  `json:"item_id"`
+	Shop_id   string  `json:"shop_id"`
+	//Tag
+}
+
+//Complete template is []Tpl. Array of shops and sub-array of associated items.
+type Tpl struct {
+	Shop  string    `json:"shop"`
+	Items []TplItem `json:"items"`
+}
+
+//Similar to SlistEdge, used to create edge document for templates
+type TplEdge struct {
+	To   string  `json:"_to"`
+	From string  `json:"_from"`
+	Qty  float32 `json:"qty"`
+}
+
+type TplEdgeItem struct {
+	Qty float32 `json:"qty"`
+}
+
 //Function to generate ULID of new user's db
 func makeID() string {
 	t := time.Now()
@@ -374,6 +403,14 @@ type aranUpdateSlistAll struct {
 	ctx  context.Context
 }
 
+type aranUpdateTpl struct {
+	cl   string //Specifiy collection name
+	ky   string //Document key
+	data TplEdgeItem
+	db   driver.Database
+	ctx  context.Context
+}
+
 func (update aranUpdateItem) aranUp() (string, error) {
 	//Update document based on key with new data
 
@@ -447,6 +484,26 @@ func (update aranUpdateSlistAll) aranUp() (string, error) {
 	meta, err := col.UpdateDocument(update.ctx, update.ky, patch)
 	if err != nil {
 		fmt.Println("Error: aranUpdate: UpdateDocument " + update.ky)
+		return "", err
+	}
+
+	return meta.Key, nil
+
+}
+
+func (update aranUpdateTpl) aranUp() (string, error) {
+	//Update document based on key with new data
+
+	patch := update.data
+	col, err := update.db.Collection(update.ctx, update.cl)
+	if err != nil {
+		fmt.Println("Error: aranUpdate: db.Collection", err)
+		return "", err
+	}
+
+	meta, err := col.UpdateDocument(update.ctx, update.ky, patch)
+	if err != nil {
+		fmt.Println("Error: aranUpdate: UpdateDocument "+update.ky, err, patch)
 		return "", err
 	}
 

@@ -99,6 +99,29 @@ func (db dbase) getShoppingList(id string) (string, error) {
 		return "", err
 	}
 
+	if slistQ == nil {
+		return "", errors.New("no such id")
+	}
+
+	//Convert received value from interface to string
+	sl := fmt.Sprint(slistQ[0]["edge"])
+
+	return sl, nil
+
+}
+
+func (db dbase) getTemplate(id string) (string, error) {
+
+	//DB query - get ShoppingList name
+	query := "FOR a in Templates FILTER a._key == @id RETURN {'edge': a.name}"
+
+	slistQ, err := db.getQueries(query, "id", id)
+
+	//Catch error from the query
+	if err != nil {
+		return "", err
+	}
+
 	//Convert received value from interface to string
 	sl := fmt.Sprint(slistQ[0]["edge"])
 
@@ -328,24 +351,21 @@ func listGetAll(c echo.Context) error {
 func listGetShopping(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
-	db := dbase{dbv}
 
 	//Get item id
 	id := c.Param("id")
 
-	s, err := db.getShoppingList(id)
+	shQ, err := listGetShoppingCore(id, dbv, "full")
+
+	//Catch errors
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, "invalid id")
-	}
+		fmt.Println("ShoppingList error2:", err)
 
-	//DB query - get shopping list contents
-	query2 := "FOR c in Shops let b = c.name let sub = (FOR v, e IN 1..1 OUTBOUND c @slist let a = {'label': v.name, 'nett': v.nett, 'nett_unit': v.nett_unit, 'price': e.price, 'currency': e.currency, 'qty': e.qty, 'trolley': e.trolley, 'special': e.special, 'edge_id': e._key, 'item_id': v._key, 'shop_id': c._key} RETURN a ) FILTER sub != [] RETURN {'shop': b, 'items': sub}"
-
-	shQ, err := db.getQueries(query2, "slist", s)
-
-	//Catch error from the query
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, err)
+		if err.Error() == "id error" {
+			return c.JSON(http.StatusBadRequest, "invalid id")
+		} else if err.Error() == "server error" {
+			return c.JSON(http.StatusInternalServerError, "server error")
+		}
 	}
 
 	if shQ == nil {
@@ -354,6 +374,47 @@ func listGetShopping(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, shQ)
+}
+
+//ShoppingList id - i, database - d,p - query params
+func listGetShoppingCore(i, dbv, p string) ([]d, error) {
+	//Assign database
+	db := dbase{dbv}
+
+	//Get ShoppingList id
+	id := i
+
+	s, err := db.getShoppingList(id)
+	if err != nil {
+		return nil, errors.New("id error")
+	}
+
+	//DB query - get shopping list contents
+	//"p" is query parameter
+	// - "full" returns the full ShoppingList Edge Item
+	// - "qty" returns only Template Edge item (see listMakeTemplate)
+	var query2 string
+	var qb string
+	if p == "full" {
+		query2 = "FOR c in Shops let b = c.name let sub = (FOR v, e IN 1..1 OUTBOUND c @slist let a = {'label': v.name, 'nett': v.nett, 'nett_unit': v.nett_unit, 'price': e.price, 'currency': e.currency, 'qty': e.qty, 'trolley': e.trolley, 'special': e.special, 'edge_id': e._key, 'item_id': v._key, 'shop_id': c._key} RETURN a ) FILTER sub != [] RETURN {'shop': b, 'items': sub}"
+		qb = "slist"
+	} else if p == "qty" {
+		query2 = "FOR c in Shops let b = c.name let sub = (FOR v, e IN 1..1 OUTBOUND c @tpl let a = {'label': v.name, 'nett': v.nett, 'nett_unit': v.nett_unit, 'qty': e.qty, 'edge_id': e._key, 'item_id': v._key, 'shop_id': c._key} RETURN a ) FILTER sub != [] RETURN {'shop': b, 'items': sub}"
+		qb = "tpl"
+	}
+
+	shQ, err2 := db.getQueries(query2, qb, s)
+
+	//Catch error from the query
+	if err2 != nil {
+		return nil, errors.New("server error")
+	}
+
+	if shQ == nil {
+		return nil, nil
+	}
+
+	return shQ, nil
 }
 
 func listGetTrolley(c echo.Context) error {
@@ -390,6 +451,83 @@ func listGetTrolley(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, shQ)
+}
+
+func listGetTemplates(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//DB query
+	query := "FOR tpl in Templates RETURN {'name': tpl.name, 'date': tpl.date, 'hidden': tpl.hidden, 'id': tpl._key, 'label': tpl.label}"
+	var bind string
+
+	//Run query and response. bind is a null string "" since no binding takes place for the query
+	listQ, err := db.getQueries(query, bind, bind)
+
+	//Catch error from the query
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+		//TODO: return specific error for "AQL: collection or view not found: Templates (while parsing)"
+		// This will allow frontend code to differentiate between 500 errors
+	}
+
+	if listQ == nil {
+		fault := "No data returned"
+		return c.JSON(http.StatusBadRequest, fault)
+	}
+
+	return c.JSON(http.StatusOK, listQ)
+
+}
+
+func listTemplateDetailsCore(i, dbv string) ([]d, error) {
+
+	db := dbase{dbv}
+	s, err := db.getTemplate(i)
+	if err != nil {
+		return nil, errors.New("id error")
+	}
+
+	//DB query - get template's contents
+	query2 := "FOR c in Shops let b = c.name let sub = (FOR v, e IN 1..1 OUTBOUND c @tpl let a = {'label': v.name, 'nett': v.nett, 'nett_unit': v.nett_unit, 'qty': e.qty, 'edge_id': e._key, 'item_id': v._key, 'shop_id': c._key} RETURN a ) FILTER sub != [] RETURN {'shop': b, 'items': sub}"
+
+	tplQ, err := db.getQueries(query2, "tpl", s)
+
+	//Catch error from the query
+	if err != nil {
+		return nil, errors.New("server error")
+	}
+
+	return tplQ, nil
+
+}
+
+func listTemplateDetails(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+
+	//Get item id
+	id := c.Param("id")
+
+	tplQ, err := listTemplateDetailsCore(id, dbv)
+
+	//Catch errors
+	if err != nil {
+		if err.Error() == "id error" {
+			return c.JSON(http.StatusBadRequest, "invalid id")
+		} else if err.Error() == "server error" {
+			return c.JSON(http.StatusInternalServerError, "server error")
+		}
+	}
+
+	if tplQ == nil {
+		fault := "No data to return."
+		return c.JSON(http.StatusNoContent, fault) //204 is returned, indicating connection successful but no data
+	}
+
+	return c.JSON(http.StatusOK, tplQ)
+
 }
 
 func adminGetUsers(c echo.Context) error {
@@ -599,9 +737,8 @@ func shopCreate(c echo.Context) error {
 	return c.JSON(http.StatusOK, "data submitted: "+insertQ)
 }
 
-func listCreate(c echo.Context) error {
-	//Get db from context, convert from interface to string
-	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+//dbv - db name, returns data, edge name and error
+func listCreateCore(dbv string) ([]d, string, error) {
 	db := dbase{dbv}
 
 	t := time.Now().Unix()
@@ -611,7 +748,7 @@ func listCreate(c echo.Context) error {
 	//Catch error from the query
 	if err != nil {
 		//Since Unix time will always be unqiue in this situation, any error means something has gone wrong server / code side
-		return c.JSON(http.StatusInternalServerError, err)
+		return nil, "", errors.New("server error")
 	}
 
 	//Update ShoppingLists:
@@ -621,10 +758,220 @@ func listCreate(c echo.Context) error {
 	execQ, err := db.getQueries(query, bind, e.Name())
 
 	if err != nil {
+		return nil, "", errors.New("server error")
+	}
+
+	return execQ, e.Name(), nil
+}
+
+func listCreate(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+
+	execQ, _, err := listCreateCore(dbv)
+
+	//Catch errors
+	if err != nil {
+		if err.Error() == "id error" {
+			return c.JSON(http.StatusBadRequest, "invalid id")
+		} else if err.Error() == "server error" {
+			return c.JSON(http.StatusInternalServerError, "server error")
+		}
+	}
+
+	return c.JSON(http.StatusOK, execQ)
+
+}
+
+//Create ShoppingList from Template id
+func listMake(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+
+	//Get item id
+	id := c.Param("id")
+
+	//Retrieve Template based on id
+	tpl, err := listTemplateDetailsCore(id, dbv)
+
+	//Catch errors
+	if err != nil {
+		if err.Error() == "id error" {
+			return c.JSON(http.StatusBadRequest, "invalid id")
+		} else if err.Error() == "server error" {
+			return c.JSON(http.StatusInternalServerError, "server error")
+		}
+	}
+
+	if tpl == nil {
+		fault := "No data to return."
+		return c.JSON(http.StatusNoContent, fault) //204 is returned, indicating connection successful but no data
+	}
+
+	//Create new shopping list collection listCreateCore()
+	_, edN, err := listCreateCore(dbv)
+
+	//Catch errors
+	if err != nil {
+		if err.Error() == "id error" {
+			return c.JSON(http.StatusBadRequest, "invalid id")
+		} else if err.Error() == "server error" {
+			return c.JSON(http.StatusInternalServerError, "server error")
+		}
+	}
+
+	//Add items & shops to new shopping list
+	// - Iterate Template tpl and enter into ShoppingList using ?
+	for _, k := range tpl {
+		u := k["items"]
+		v, ok := u.([]interface{})
+		if !ok {
+			fmt.Println("Not OK!") //return error!!
+		}
+
+		for w := range v {
+			u := v[w]
+			r, ok := u.(map[string]interface{})
+			if !ok {
+				fmt.Println("Not OK2!") //return error!!
+			}
+			f := fmt.Sprintf("%v", r["shop_id"]) //From
+			t := fmt.Sprintf("%v", r["item_id"]) //To
+			q := float32(r["qty"].(float64))     //Qty
+			shl := SlistEdge{t, f, 0, 0, "", false, false, q, ""}
+			_, err = listAddItemCore(shl, dbv, edN) //Note that this function sets the date, hence 0 above.
+			if err != nil {
+				fmt.Println("Not OK3!") //return error!!
+			}
+		}
+
+	}
+
+	return c.JSON(http.StatusOK, "template created from shopping list")
+
+}
+
+func listEnableTemplates(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	_, err := db.colCreate("Templates")
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	return c.JSON(http.StatusOK, "Templates enabled")
+
+}
+
+func listCreateTemplate(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	t := time.Now().Unix()
+	n := "Template" + fmt.Sprint(t)
+	e, err := db.edgeCreate(n)
+
+	//Catch error from the query
+	if err != nil {
+		//Since Unix time will always be unqiue in this situation, any error means something has gone wrong server / code side
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	//Update Templates:
+	query := "INSERT { name: @name, 'hidden': false, 'date': DATE_NOW(),} INTO Templates RETURN NEW"
+	bind := "name"
+
+	execQ, err := db.getQueries(query, bind, e.Name())
+
+	if err != nil {
 		return c.JSON(http.StatusInternalServerError, err)
 	}
 
 	return c.JSON(http.StatusOK, execQ)
+
+}
+
+func listMakeTemplate(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get ShoppingList id
+	id := c.Param("id")
+
+	//Retrieve ShoppingList based on id
+	// - Only retrieve what is needed for a Template
+	// - (not needed: price, currency, trolley, special)
+	shQ, err := listGetShoppingCore(id, dbv, "qty")
+
+	// - Catch errors
+	if err != nil {
+
+		if err.Error() == "id error" {
+			return c.JSON(http.StatusBadRequest, "invalid id")
+		} else if err.Error() == "server error" {
+			return c.JSON(http.StatusInternalServerError, "server error")
+		}
+	}
+
+	if shQ == nil {
+		fault := "empty shopping list"
+		return c.JSON(http.StatusNoContent, fault)
+	}
+
+	//Create Template collection - TODO: this is verbose. Create Core function. See listCreateTemplate
+
+	t := time.Now().Unix()
+	n := "Template" + fmt.Sprint(t)
+	e, err := db.edgeCreate(n)
+
+	// - Catch error from the query
+	if err != nil {
+		//Since Unix time will always be unqiue in this situation, any error means something has gone wrong server / code side
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	//Update Templates with reference to new Template:
+	query := "INSERT { name: @name, 'hidden': false, 'date': DATE_NOW(),} INTO Templates RETURN NEW"
+	bind := "name"
+
+	_, err = db.getQueries(query, bind, e.Name())
+
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	//Add entries to Template collection based on ShoppingList
+	// - Iterate reduced ShoppingList shQ and enter into Template using addToTmpltCore()
+	for _, k := range shQ {
+		u := k["items"]
+		v, ok := u.([]interface{})
+		if !ok {
+			fmt.Println("Not OK!") //return error!!
+		}
+
+		for w := range v {
+			u := v[w]
+			r, ok := u.(map[string]interface{})
+			if !ok {
+				fmt.Println("Not OK2!") //return error!!
+			}
+			f := fmt.Sprintf("%v", r["shop_id"]) //From
+			t := fmt.Sprintf("%v", r["item_id"]) //To
+			q := float32(r["qty"].(float64))     //Qty
+			tdp := TplEdge{t, f, q}
+			_, err = addToTmpltCore(tdp, dbv, e.Name())
+			if err != nil {
+				fmt.Println("Not OK3!") //return error!!
+			}
+		}
+
+	}
+
+	return c.JSON(http.StatusOK, "template created from shopping list")
 
 }
 
@@ -669,6 +1016,7 @@ func adminCreateUser(c echo.Context) error {
 		}
 
 		//Create collections: Items, Shops, ShoppingLists
+		//Temlates not created by default
 		db2 := dbase{dbnew}
 		_, err = db2.colCreate("Items")
 		if err != nil {
@@ -775,6 +1123,26 @@ func (d ShopListsAll) patchQueries(c, k string, db dbase) (string, error) {
 
 	if ct {
 		data := aranUpdateSlistAll{c, k, d, dbx, ctx}
+		upd, err = data.aranUp()
+
+		if err != nil {
+			return "", err
+		}
+	}
+
+	return upd, nil
+
+}
+
+func (d TplEdgeItem) patchQueries(c, k string, db dbase) (string, error) {
+
+	var upd string
+	var err error
+
+	dbx, ctx := aranDB(ah, db.db)
+
+	if ct {
+		data := aranUpdateTpl{c, k, d, dbx, ctx}
 		upd, err = data.aranUp()
 
 		if err != nil {
@@ -924,6 +1292,41 @@ func listEdit(c echo.Context) error {
 
 }
 
+//TODO: identical to above func. Tidy up!!
+func listTemplateEdit(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get item id
+	id := c.Param("id")
+	col := "Templates"
+
+	var data ShopListsAll
+	var update string
+
+	if err := c.Bind(&data); err != nil {
+		return err
+	} else if err == nil {
+
+		//Verify data, because Arango does not by default
+		if data.Date == 0 || data.Name == "" || data.Id == "" || data.Label == "" {
+			return c.JSON(http.StatusBadRequest, "all options must be set")
+		}
+
+		update, err = data.patchQueries(col, id, db)
+
+		if err != nil {
+			//Since data was verified, any error is likely server related?
+			return c.JSON(http.StatusInternalServerError, err)
+		}
+
+	}
+
+	return c.JSON(http.StatusOK, "update successful: "+update)
+
+}
+
 //Can update edge doc contents, but not change _from and _to
 //Updates shopping lists qty, price, trolley, etc
 func listSetTrolley(c echo.Context) error {
@@ -963,6 +1366,29 @@ func listSetTrolley(c echo.Context) error {
 	return c.JSON(http.StatusOK, "update successful: "+update)
 }
 
+//c = collection name
+func listAddItemCore(s SlistEdge, dbv, c string) (string, error) {
+	db := dbase{dbv}
+
+	s.Date = time.Now().Unix()
+	s.From = "Shops/" + s.From
+	s.To = "Items/" + s.To
+
+	dbx, ctx := aranDB(ah, db.db)
+	col, err := dbx.Collection(ctx, c)
+	if err != nil {
+		return "", errors.New("server error")
+	}
+
+	meta, err := col.CreateDocument(ctx, s)
+	if err != nil {
+		return "", errors.New("server error")
+	}
+
+	return meta.Key, nil
+
+}
+
 func listAddItem(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -986,22 +1412,13 @@ func listAddItem(c echo.Context) error {
 		return err
 	} else if err == nil {
 
-		sledge.Date = time.Now().Unix()
-		sledge.From = "Shops/" + sledge.From
-		sledge.To = "Items/" + sledge.To
+		ins, err = listAddItemCore(sledge, dbv, s)
 
-		dbx, ctx := aranDB(ah, db.db)
-		col, err := dbx.Collection(ctx, s)
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, err)
+			if err.Error() == "server error" {
+				return c.JSON(http.StatusInternalServerError, "server error")
+			}
 		}
-
-		meta, err := col.CreateDocument(ctx, sledge)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, err)
-		}
-
-		ins = meta.Key
 
 	}
 
@@ -1059,6 +1476,153 @@ func listMoveItem(c echo.Context) error {
 
 	//
 
+}
+
+//Edge data, database ref, collection name
+func addToTmpltCore(t TplEdge, dbv, c string) (string, error) {
+
+	t.From = "Shops/" + t.From
+	t.To = "Items/" + t.To
+
+	dbx, ctx := aranDB(ah, dbv)
+	col, err := dbx.Collection(ctx, c)
+	if err != nil {
+		return "", errors.New("server error")
+	}
+
+	meta, err := col.CreateDocument(ctx, t)
+	if err != nil {
+		return "", errors.New("server error")
+	}
+
+	return meta.Key, nil
+
+}
+
+func listAddToTemplate(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get item id
+	id := c.Param("id")
+
+	var tpledge TplEdge
+	var ins string
+	var err2 error
+
+	//Use id to retrieve Template name from Templates
+	s, err := db.getTemplate(id)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "invalid id")
+	}
+
+	//Add Edge
+	//let d = DATE_NOW() INSERT { _to: "Items/382", _from: "Shops/246", qty: 6} INTO Template20220717001 RETURN NEW
+	if err := c.Bind(&tpledge); err != nil {
+		return err
+	} else if err == nil {
+
+		ins, err2 = addToTmpltCore(tpledge, db.db, s)
+
+		if err2 != nil {
+			if err2.Error() == "server error" {
+				return c.JSON(http.StatusInternalServerError, "server error")
+			}
+		}
+
+	}
+
+	return c.JSON(http.StatusOK, ins)
+}
+
+func listTemplateMoveItem(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get item id
+	id := c.Param("id")
+	key := c.Param("key")
+
+	//Use id to retrieve ShoppingList name from ShoppingLists
+	s, err := db.getTemplate(id)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "invalid id")
+	}
+
+	//Bind body: the _from should contain the id of the new shop
+	var tpledge TplEdge
+	if err := c.Bind(&tpledge); err != nil {
+		return c.JSON(http.StatusBadRequest, "Move item: error binding")
+	} else if err == nil {
+
+		tpledge.From = "Shops/" + tpledge.From
+		tpledge.To = "Items/" + tpledge.To
+	}
+
+	//Link to Edge Collection
+	dbx, ctx := aranDB(ah, db.db)
+	col, err := dbx.Collection(ctx, s)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	//Delete old edge
+	_, err = col.RemoveDocument(ctx, key)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	//Insert new edge
+	//Already have db and correct collection
+	meta, err := col.CreateDocument(ctx, tpledge)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+	new := meta.Key
+
+	return c.JSON(http.StatusOK, new)
+
+	//
+}
+
+func listUpdateTplItem(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get item id
+	id := c.Param("id")
+	key := c.Param("key")
+
+	var tpi TplEdgeItem
+	var update string
+
+	s, err := db.getTemplate(id)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "invalid id")
+	}
+
+	if err := c.Bind(&tpi); err != nil {
+		return err
+	} else if err == nil {
+
+		//Verify qty is more than 0
+		if tpi.Qty != 0 {
+
+			update, err = tpi.patchQueries(s, key, db)
+
+			if err != nil {
+				//Since data was verified, any error is likely server related?
+				return c.JSON(http.StatusInternalServerError, err)
+			}
+
+		}
+
+	}
+
+	return c.JSON(http.StatusOK, "update successful: "+update)
 }
 
 /*DDDDDDDD
@@ -1130,6 +1694,37 @@ func listItemRemove(c echo.Context) error {
 	return c.JSON(http.StatusOK, rem)
 }
 
+func listTemplateItemRemove(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get item id
+	id := c.Param("id")
+	key := c.Param("key")
+
+	//Use id to retrieve ShoppingList name from ShoppingLists
+	s, err := db.getTemplate(id)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "invalid id")
+	}
+
+	dbx, ctx := aranDB(ah, db.db)
+	col, err := dbx.Collection(ctx, s)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	meta, err := col.RemoveDocument(ctx, key)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	rem := meta.Key
+
+	return c.JSON(http.StatusOK, rem)
+}
+
 /* !!!!!!!!!!!!!!
  *      MAIN
  * !!!!!!!!!!!!!!
@@ -1174,13 +1769,16 @@ func main() {
 	r2.PATCH("/update/:id", shopEdit)
 	r2.DELETE("delete/:id", shopDelete)
 
-	//Router 3 - SHOPPINGlist, Trolley
+	//Router 3
 	r3 := e.Group("/shoppinglist", middleUser)
+
+	//Shopping List, Trolley
 	r3.GET("/allvisible", listGetVisible)
 	r3.GET("/all", listGetAll)
 	r3.GET("/view/:id", listGetShopping)
 	r3.GET("/trolley/:id/:key", listGetTrolley)
 	r3.POST("/new", listCreate)
+	r3.POST("/make/:id", listMake) //new based on Template id
 	r3.PATCH("/hide/:id", listSetHidden)
 	r3.PATCH("/edit/:id", listEdit)
 	r3.PATCH("/trolley/:id/:key", listSetTrolley)
@@ -1188,15 +1786,32 @@ func main() {
 	r3.PATCH("/moveitem/:id/:key", listMoveItem)
 	r3.DELETE("/delete/item/:id/:key", listItemRemove)
 
+	//Shopping list Templates
+	r3.GET("/templates", listGetTemplates)
+	r3.GET("/templates/details/:id", listTemplateDetails)
+	r3.POST("/templates", listCreateTemplate)
+	r3.POST("/templates/:id", listMakeTemplate) //new based on ShoppingList id
+	r3.POST("/templates/enable", listEnableTemplates)
+	r3.PATCH("/templates/:id", listTemplateEdit)          //edit template - temnplate name, date
+	r3.PATCH("/templates/details/:id", listAddToTemplate) //edit template - add item to template
+	r3.PATCH("/templates/moveitem/:id/:key", listTemplateMoveItem)
+	r3.PATCH("/templates/details/:id/:key", listUpdateTplItem)       //edit template - edit individual item within template
+	r3.DELETE("/templates/details/:id/:key", listTemplateItemRemove) //edit template - remove item from template
+	/*
+
+		r3.DELETE("/templates/:id", listRemoveTemplate) 	//delete template...or rather hide?
+
+	*/
+
 	//Router 4 - SHOPPINGlist, Trolley
 	r4 := e.Group("/trend", middleUser)
 	r4.GET("/item/:id", trendGetItem)
 
 	//Each method here must verify cache[sub].role == admin !!!!!
-	r5 := e.Group("/admin", middleAdmin)
-	r5.GET("/maybe", adminMaybe)
-	r5.GET("/users", adminGetUsers)
-	r5.POST("/users", adminCreateUser)
+	r6 := e.Group("/admin", middleAdmin)
+	r6.GET("/maybe", adminMaybe)
+	r6.GET("/users", adminGetUsers)
+	r6.POST("/users", adminCreateUser)
 	//DELETE user (drop DB, remove from _system/users)
 	//Setting as admin currently only possible by logging into container and running this query:
 
