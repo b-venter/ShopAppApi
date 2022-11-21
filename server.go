@@ -323,6 +323,74 @@ func listGetVisible(c echo.Context) error {
 	return c.JSON(http.StatusOK, listQ)
 }
 
+//ShoppingList id - i, database - d,p - query params
+func getNameCore(i, d, p string) ([]d, error) {
+	db := dbase{d}
+
+	var bind string
+	bind2 := i
+	var query string
+
+	//DB query
+	if p == "sl" {
+		query = "FOR sl in ShoppingLists FILTER sl._key == @sl RETURN {'label': sl.label}"
+		bind = "sl"
+	} else if p == "tpl" {
+		query = "FOR tpl in Templates FILTER tpl._key == @tpl RETURN {'label': tpl.label}"
+		bind = "tpl"
+	}
+
+	//Run query and response.
+	listQ, err := db.getQueries(query, bind, bind2)
+
+	return listQ, err
+
+}
+
+func listGetName(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+
+	//Get item id
+	id := c.Param("id")
+
+	listQ, err := getNameCore(id, dbv, "sl")
+
+	//Catch error from the query
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	if listQ == nil {
+		fault := "No data returned"
+		return c.JSON(http.StatusBadRequest, fault)
+	}
+
+	return c.JSON(http.StatusOK, listQ)
+}
+
+func listTemplateName(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+
+	//Get item id
+	id := c.Param("id")
+
+	listQ, err := getNameCore(id, dbv, "tpl")
+
+	//Catch error from the query
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	if listQ == nil {
+		fault := "No data returned"
+		return c.JSON(http.StatusBadRequest, fault)
+	}
+
+	return c.JSON(http.StatusOK, listQ)
+}
+
 func listGetAll(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -1777,6 +1845,7 @@ func main() {
 	r3.GET("/all", listGetAll)
 	r3.GET("/view/:id", listGetShopping)
 	r3.GET("/trolley/:id/:key", listGetTrolley)
+	r3.GET("/name/:id", listGetName)
 	r3.POST("/new", listCreate)
 	r3.POST("/make/:id", listMake) //new based on Template id
 	r3.PATCH("/hide/:id", listSetHidden)
@@ -1789,6 +1858,7 @@ func main() {
 	//Shopping list Templates
 	r3.GET("/templates", listGetTemplates)
 	r3.GET("/templates/details/:id", listTemplateDetails)
+	r3.GET("/templates/name/:id", listTemplateName)
 	r3.POST("/templates", listCreateTemplate)
 	r3.POST("/templates/:id", listMakeTemplate) //new based on ShoppingList id
 	r3.POST("/templates/enable", listEnableTemplates)
@@ -1799,7 +1869,7 @@ func main() {
 	r3.DELETE("/templates/details/:id/:key", listTemplateItemRemove) //edit template - remove item from template
 	/*
 
-		r3.DELETE("/templates/:id", listRemoveTemplate) 	//delete template...or rather hide?
+		r3.DELETE("/templates/:id", listRemoveTemplate) 	//delete template...or rather hide? Delete edge and enrty in Templates
 
 	*/
 
