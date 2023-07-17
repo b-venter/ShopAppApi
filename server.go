@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,10 +21,10 @@ import (
 var ah, ahok = os.LookupEnv("ADB_HOST")
 var ap, _ = os.LookupEnv("ADB_PASS")
 
-//Connection test
+// Connection test
 var ct bool = false
 
-//Local cache of users, db and jwt sub
+// Local cache of users, db and jwt sub
 type user struct {
 	email string
 	db    string
@@ -32,11 +33,11 @@ type user struct {
 
 type Cache map[string]user
 
-//Initiate "cache" - if this ever gets BIG, then rather use redis or even just go-cache
-//["sub"]{user struct}
+// Initiate "cache" - if this ever gets BIG, then rather use redis or even just go-cache
+// ["sub"]{user struct}
 var cache = make(Cache)
 
-//Simple db type for methods
+// Simple db type for methods
 type dbase struct {
 	db string
 }
@@ -60,9 +61,9 @@ func adminMaybe(c echo.Context) error {
  * #############
  */
 
-//Common function to run getQueries
-//q is the query
-//b1 is the @bind, b2 is the value
+// Common function to run getQueries
+// q is the query
+// b1 is the @bind, b2 is the value
 func (db dbase) getQueries(q, b1, b2 string) ([]d, error) {
 
 	//Some queries have no bind. In that case, create as blank, or nil. If present, assign bind
@@ -242,7 +243,7 @@ func shopGetAll(c echo.Context) error {
 	return c.JSON(http.StatusOK, execQ)
 }
 
-//TODO: LIKE() with caseInsensitive. https://www.arangodb.com/docs/3.9/aql/functions-string.html#like
+// TODO: LIKE() with caseInsensitive. https://www.arangodb.com/docs/3.9/aql/functions-string.html#like
 func itemGetLike(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -323,7 +324,7 @@ func listGetVisible(c echo.Context) error {
 	return c.JSON(http.StatusOK, listQ)
 }
 
-//ShoppingList id - i, database - d,p - query params
+// ShoppingList id - i, database - d,p - query params
 func getNameCore(i, d, p string) ([]d, error) {
 	db := dbase{d}
 
@@ -444,7 +445,7 @@ func listGetShopping(c echo.Context) error {
 	return c.JSON(http.StatusOK, shQ)
 }
 
-//ShoppingList id - i, database - d,p - query params
+// ShoppingList id - i, database - d,p - query params
 func listGetShoppingCore(i, dbv, p string) ([]d, error) {
 	//Assign database
 	db := dbase{dbv}
@@ -629,6 +630,7 @@ func adminGetUsers(c echo.Context) error {
 
 }
 
+// TODO: This is too verbose, too many repeated calls. Manual sorting because item's date != shopping list date.
 func trendGetItem(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -657,6 +659,7 @@ func trendGetItem(c echo.Context) error {
 		return c.JSON(http.StatusOK, "No trend data available")
 	}
 
+	var trS []int //Sorting slice
 	dbx, ctx := aranDB(ah, db.db)
 	query_tr := "FOR v, e IN 1..1 INBOUND @item @sl RETURN {'shop': v.name, 'branch': v.branch, 'city': v.city, 'country': v.country, 'currency': e.currency, 'price': e.price, 'date': e.date, 'special': e.special, 'list_id': e._id}"
 	for _, trR := range trQ {
@@ -674,6 +677,7 @@ func trendGetItem(c echo.Context) error {
 
 		//If trend result is valid (not ""), then add to trend slice, increase counter
 		if len(tres) > 0 {
+			trS = append(trS, int(tres[0]["date"].(float64)))
 			trend = append(trend, tres[0])
 			trI++
 		}
@@ -684,7 +688,21 @@ func trendGetItem(c echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, trend)
+	//Sort trend by date (trendS is sorted trend)
+	trendS := []d{}
+	if len(trS) > 0 {
+		sort.Sort(sort.Reverse(sort.IntSlice(trS)))
+
+		for _, srt := range trS {
+			for _, unsrt := range trend {
+				if unsrt["date"] == float64(srt) {
+					trendS = append(trendS, unsrt)
+				}
+			}
+		}
+	}
+
+	return c.JSON(http.StatusOK, trendS)
 }
 
 /* ++++++++++++++
@@ -693,7 +711,7 @@ func trendGetItem(c echo.Context) error {
  */
 //TODO: the postQueries methods can be tidied up to be less redundant/repeated
 
-//c for collection name
+// c for collection name
 func (i ItemNew) postQueries(c string, db dbase) (string, error) {
 
 	var insertQ string
@@ -805,7 +823,7 @@ func shopCreate(c echo.Context) error {
 	return c.JSON(http.StatusOK, "data submitted: "+insertQ)
 }
 
-//dbv - db name, returns data, edge name and error
+// dbv - db name, returns data, edge name and error
 func listCreateCore(dbv string) ([]d, string, error) {
 	db := dbase{dbv}
 
@@ -851,7 +869,7 @@ func listCreate(c echo.Context) error {
 
 }
 
-//Create ShoppingList from Template id
+// Create ShoppingList from Template id
 func listMake(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -1360,7 +1378,7 @@ func listEdit(c echo.Context) error {
 
 }
 
-//TODO: identical to above func. Tidy up!!
+// TODO: identical to above func. Tidy up!!
 func listTemplateEdit(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -1395,8 +1413,8 @@ func listTemplateEdit(c echo.Context) error {
 
 }
 
-//Can update edge doc contents, but not change _from and _to
-//Updates shopping lists qty, price, trolley, etc
+// Can update edge doc contents, but not change _from and _to
+// Updates shopping lists qty, price, trolley, etc
 func listSetTrolley(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -1434,7 +1452,7 @@ func listSetTrolley(c echo.Context) error {
 	return c.JSON(http.StatusOK, "update successful: "+update)
 }
 
-//c = collection name
+// c = collection name
 func listAddItemCore(s SlistEdge, dbv, c string) (string, error) {
 	db := dbase{dbv}
 
@@ -1546,7 +1564,7 @@ func listMoveItem(c echo.Context) error {
 
 }
 
-//Edge data, database ref, collection name
+// Edge data, database ref, collection name
 func addToTmpltCore(t TplEdge, dbv, c string) (string, error) {
 
 	t.From = "Shops/" + t.From
@@ -1699,7 +1717,7 @@ func listUpdateTplItem(c echo.Context) error {
 *
  DDDDDDD*/
 
-//Deleting an item: this should also remove history, i.e. remove the edge docs associated
+// Deleting an item: this should also remove history, i.e. remove the edge docs associated
 func itemDelete(c echo.Context) error {
 	//Get item id
 	id := c.Param("id")
@@ -1730,7 +1748,7 @@ func shopDelete(c echo.Context) error {
 	return c.JSON(http.StatusOK, "still developing this one... ")
 }
 
-//Removes edge document (shopping list item) from Edge Collection (ShoppngListxyz123)
+// Removes edge document (shopping list item) from Edge Collection (ShoppngListxyz123)
 func listItemRemove(c echo.Context) error {
 	//Get db from context, convert from interface to string
 	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
@@ -1875,7 +1893,7 @@ func main() {
 
 	//Router 4 - SHOPPINGlist, Trolley
 	r4 := e.Group("/trend", middleUser)
-	r4.GET("/item/:id", trendGetItem)
+	r4.GET("/item/:id", trendGetItem) //Note: This returns a sorted array (highest to lowest date), top 10 results.
 
 	//Each method here must verify cache[sub].role == admin !!!!!
 	r6 := e.Group("/admin", middleAdmin)
