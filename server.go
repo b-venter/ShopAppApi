@@ -1717,6 +1717,23 @@ func listUpdateTplItem(c echo.Context) error {
 *
  DDDDDDD*/
 
+func (db dbase) delTemplate(id string) error {
+
+	//DB query - delete reference to TemplateX in Templates
+	query := "REMOVE @id in Templates"
+
+	//The query will return an empty array. If you want to test or view , replace the _ with a variable
+	_, err := db.getQueries(query, "id", id)
+
+	//Catch error from the query
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
 // Deleting an item: this should also remove history, i.e. remove the edge docs associated
 func itemDelete(c echo.Context) error {
 	//Get item id
@@ -1789,7 +1806,7 @@ func listTemplateItemRemove(c echo.Context) error {
 	id := c.Param("id")
 	key := c.Param("key")
 
-	//Use id to retrieve ShoppingList name from ShoppingLists
+	//Use id to retrieve Template name from Templates
 	s, err := db.getTemplate(id)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, "invalid id")
@@ -1809,6 +1826,46 @@ func listTemplateItemRemove(c echo.Context) error {
 	rem := meta.Key
 
 	return c.JSON(http.StatusOK, rem)
+}
+
+func listRemoveTemplate(c echo.Context) error {
+	//Get db from context, convert from interface to string
+	dbv := fmt.Sprintf("%v", c.Request().Context().Value("db"))
+	db := dbase{dbv}
+
+	//Get template id
+	id := c.Param("id")
+
+	//Use id to retrieve Template name from Templates
+	s, err := db.getTemplate(id)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "invalid id")
+	}
+
+	dbx, ctx := aranDB(ah, db.db)
+
+	//Remove TemplateX collection
+	col, err := dbx.Collection(ctx, s)
+	if err != nil {
+		fmt.Println("Error0 deleting", err)
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	err = col.Remove(ctx)
+	if err != nil {
+		fmt.Println("Error1 deleting", err)
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	//Remove document from Templates collection
+	err = db.delTemplate(id)
+	if err != nil {
+		fmt.Println("Error2 deleting", err)
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
+	return c.JSON(http.StatusOK, c.Param("id"))
+
 }
 
 /* !!!!!!!!!!!!!!
@@ -1885,6 +1942,7 @@ func main() {
 	r3.PATCH("/templates/moveitem/:id/:key", listTemplateMoveItem)
 	r3.PATCH("/templates/details/:id/:key", listUpdateTplItem)       //edit template - edit individual item within template
 	r3.DELETE("/templates/details/:id/:key", listTemplateItemRemove) //edit template - remove item from template
+	r3.DELETE("/templates/:id", listRemoveTemplate)                  //delete template - delete edge and entry in Templates
 	/*
 
 		r3.DELETE("/templates/:id", listRemoveTemplate) 	//delete template...or rather hide? Delete edge and enrty in Templates
