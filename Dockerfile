@@ -2,7 +2,7 @@ FROM golang:1.21-alpine as build-stage
 
 RUN apk --no-cache add ca-certificates
     
-WORKDIR /home/avenger/shopapi
+WORKDIR /shopapi
 
 COPY . .
 
